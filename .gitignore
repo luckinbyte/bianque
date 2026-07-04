@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# 构建产物
+*.egg-info/
+*.egg
+build/
+dist/
+
+# 测试 / 缓存
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# 敏感配置(模板 .env.example 仍纳入版本控制)
+.env
+.env.local
+.env.*.local
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store

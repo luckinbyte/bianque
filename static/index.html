@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bianque — 源码分析</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>🩺 Bianque</h1>
+    <div class="hdr-right">
+      <span id="status" class="status idle">空闲</span>
+      <button id="settingsBtn" type="button">⚙ 设置</button>
+      <button id="newChatBtn" type="button" class="ghost">＋ 新对话</button>
+    </div>
+  </header>
+
+  <!-- 设置面板 -->
+  <section id="settings" class="panel hidden">
+    <h2>设置(保存在浏览器 localStorage,不进 URL)</h2>
+    <p class="hint">访问密码由部署方提供。模型 apikey 是你自己的,仅随会话发到服务端、按会话存内存,不落盘。</p>
+    <label>访问密码 (APP_PASSWORD)
+      <input type="password" id="cfgToken" autocomplete="off" placeholder="服务端 APP_PASSWORD">
+    </label>
+    <fieldset>
+      <legend>模型</legend>
+      <label class="row">Provider
+        <select id="cfgProvider">
+          <option value="openai_compat">openai_compat (OpenAI/GLM/DeepSeek/Ollama…)</option>
+          <option value="anthropic">anthropic (Claude)</option>
+          <option value="local">local (Ollama 等)</option>
+        </select>
+      </label>
+      <label class="row">Base URL
+        <input type="text" id="cfgBase" placeholder="如 https://open.bigmodel.cn/api/paas/v4">
+      </label>
+      <label class="row">Model
+        <input type="text" id="cfgModel" placeholder="如 glm-4.5 / deepseek-chat / gpt-4o-mini">
+      </label>
+      <label class="row">API Key
+        <input type="password" id="cfgApikey" autocomplete="off" placeholder="sk-…">
+      </label>
+    </fieldset>
+    <label>分析目标(服务端本机的仓库路径,必须在 ALLOWED_ROOTS 内)
+      <input type="text" id="cfgRepo" placeholder="/home/code/myproject">
+    </label>
+    <div class="actions">
+      <button id="saveSettingsBtn" type="button" class="primary">保存</button>
+      <button id="clearSettingsBtn" type="button" class="danger">清除 localStorage</button>
+      <button id="closeSettingsBtn" type="button" class="ghost">关闭</button>
+    </div>
+  </section>
+
+  <!-- 主界面 -->
+  <main id="main">
+    <div id="repoLine" class="repoline"></div>
+    <div id="transcript"></div>
+
+    <div id="clarifyBox" class="clarify hidden">
+      <div class="clarify-q" id="clarifyQ"></div>
+      <textarea id="clarifyInput" rows="2" placeholder="补充说明…"></textarea>
+      <button id="clarifySendBtn" type="button" class="primary">回答</button>
+    </div>
+
+    <form id="composer">
+      <textarea id="question" rows="2" placeholder="问点关于这个代码库的…(可随时追问)"></textarea>
+      <button id="sendBtn" type="submit" class="primary">发送</button>
+      <button id="stopBtn" type="button" class="danger hidden">停止</button>
+    </form>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
