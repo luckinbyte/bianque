@@ -22,7 +22,9 @@ html.theme-night, html:not(.theme-paper) {
   --chip-bg: #2a2218;
   --chip-ink: #e0a8a0;
   --code-bg: #120f0c;
-  --silk: none;
+  --silk:
+    radial-gradient(130% 70% at 50% 0%, rgba(214,163,94,.16), transparent 62%),
+    repeating-linear-gradient(to right, transparent 0, transparent 43px, rgba(201,138,75,.04) 43px, rgba(201,138,75,.04) 44px);
 }
 
 html.theme-paper {
