@@ -1,16 +1,18 @@
-// Bianque front-end. Vanilla JS, fetch-based SSE (so X-App-Token can be a header).
-// Secrets live only in localStorage + the Authorization-style header; never in a URL.
+// Bianque front-end. Vanilla JS, fetch-based SSE streaming.
+// The deployment owns repo_root/provider/model; the browser only stores the
+// user's own API key (in localStorage) and sends it in the session body.
 
 const $ = (id) => document.getElementById(id);
 const LS_KEY = "bianque.settings.v1";
 
 const state = {
-  cfg: null,          // {token, provider, base_url, model, apikey, repo}
+  cfg: null,          // {apikey}
+  server: null,       // {repo_root, provider, base_url, model, context_window} from /api/config
   sessionId: null,
   streaming: false,
   abortCtrl: null,
-  pendingClarify: null, // {call_id}
-  reasoningEl: null,    // current streaming reasoning block
+  pendingClarify: null,
+  reasoningEl: null,
 };
 
 // ---------- settings ----------
@@ -23,13 +25,7 @@ function saveSettings(cfg) {
   state.cfg = cfg;
 }
 function openSettings() {
-  const c = state.cfg || {};
-  $("cfgToken").value = c.token || "";
-  $("cfgProvider").value = c.provider || "openai_compat";
-  $("cfgBase").value = c.base_url || "";
-  $("cfgModel").value = c.model || "";
-  $("cfgApikey").value = c.apikey || "";
-  $("cfgRepo").value = c.repo || "";
+  $("cfgApikey").value = (state.cfg && state.cfg.apikey) || "";
   $("settings").classList.remove("hidden");
 }
 function closeSettings() { $("settings").classList.add("hidden"); }
@@ -37,31 +33,47 @@ function closeSettings() { $("settings").classList.add("hidden"); }
 $("settingsBtn").addEventListener("click", openSettings);
 $("closeSettingsBtn").addEventListener("click", closeSettings);
 $("saveSettingsBtn").addEventListener("click", () => {
-  const cfg = {
-    token: $("cfgToken").value.trim(),
-    provider: $("cfgProvider").value,
-    base_url: $("cfgBase").value.trim(),
-    model: $("cfgModel").value.trim(),
-    apikey: $("cfgApikey").value.trim(),
-    repo: $("cfgRepo").value.trim(),
-  };
-  if (!cfg.token || !cfg.apikey || !cfg.repo) {
-    alert("请至少填写:访问密码、API Key、分析目标路径");
-    return;
-  }
-  saveSettings(cfg);
+  const apikey = $("cfgApikey").value.trim();
+  if (!apikey) { alert("请填写 API Key"); return; }
+  saveSettings({ apikey });
   closeSettings();
-  refreshRepoLine();
 });
 $("clearSettingsBtn").addEventListener("click", () => {
-  if (confirm("清除本地保存的设置?")) { localStorage.removeItem(LS_KEY); state.cfg = null; openSettings(); }
+  if (confirm("清除本地保存的 API Key?")) { localStorage.removeItem(LS_KEY); state.cfg = null; openSettings(); }
 });
 
-// ---------- rendering ----------
+// ---------- server config (read-only, shared) ----------
 
-function refreshRepoLine() {
-  $("repoLine").textContent = state.cfg && state.cfg.repo ? `📂 ${state.cfg.repo}` : "未设置仓库 — 点 ⚙ 设置";
+async function loadServerConfig() {
+  try {
+    const r = await fetch("/api/config");
+    if (r.ok) state.server = await r.json();
+  } catch { /* server unreachable; placeholders will show */ }
+  initContextMeter();
 }
+
+function initContextMeter() {
+  const w = (state.server && state.server.context_window) || 0;
+  const bar = $("ctxProgress");
+  bar.max = w || 100; bar.value = 0; bar.classList.remove("high");
+  $("ctxText").textContent = w ? `0 / ${fmt(w)}` : "—";
+}
+
+function updateContext(used, window_) {
+  const w = window_ || (state.server && state.server.context_window) || 0;
+  const bar = $("ctxProgress");
+  if (w) { bar.max = w; bar.value = Math.min(used, w); }
+  const ratio = w ? used / w : 0;
+  bar.classList.toggle("high", ratio >= 0.8);
+  $("ctxText").textContent = w ? `${fmt(used)} / ${fmt(w)} · ${Math.round(ratio * 100)}%` : fmt(used);
+}
+
+function fmt(n) {
+  if (n >= 1000) return (n / 1000).toFixed(n % 1000 ? 1 : 0) + "k";
+  return String(n);
+}
+
+// ---------- rendering ----------
 
 function setStatus(text, cls) {
   const s = $("status");
@@ -85,10 +97,7 @@ function ensureReasoning() {
   return state.reasoningEl.querySelector(".blk-body");
 }
 
-function appendReasoning(text) {
-  ensureReasoning().appendChild(document.createTextNode(text));
-}
-
+function appendReasoning(text) { ensureReasoning().appendChild(document.createTextNode(text)); }
 function finalizeReasoning() { state.reasoningEl = null; }
 
 function renderToolCall(ev) {
@@ -165,6 +174,7 @@ function handleEvent(ev) {
     case "tool_call": renderToolCall(ev); break;
     case "tool_result": renderToolResult(ev); break;
     case "clarification": renderClarification(ev); break;
+    case "context": updateContext(ev.used, ev.window); break;
     case "answer": renderAnswer(ev); break;
     case "error":
     case "cancelled": renderTerminal(ev); break;
@@ -178,11 +188,8 @@ async function ensureSession() {
   if (state.sessionId) return state.sessionId;
   const r = await fetch("/api/sessions", {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-App-Token": state.cfg.token },
-    body: JSON.stringify({
-      provider: state.cfg.provider, base_url: state.cfg.base_url || null,
-      apikey: state.cfg.apikey, model: state.cfg.model, repo_path: state.cfg.repo,
-    }),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ apikey: state.cfg.apikey }),
   });
   if (!r.ok) throw new Error(`创建会话失败 (${r.status}): ${await r.text()}`);
   state.sessionId = (await r.json()).session_id;
@@ -190,7 +197,7 @@ async function ensureSession() {
 }
 
 async function sendMessage() {
-  if (!state.cfg) { openSettings(); return; }
+  if (!state.cfg || !state.cfg.apikey) { openSettings(); return; }
   const question = $("question").value.trim();
   if (!question || state.streaming) return;
 
@@ -203,7 +210,7 @@ async function sendMessage() {
     const sid = await ensureSession();
     const r = await fetch(`/api/sessions/${sid}/message`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-App-Token": state.cfg.token },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ question }),
     });
     if (!r.ok) throw new Error(`发起分析失败 (${r.status}): ${await r.text()}`);
@@ -220,10 +227,7 @@ async function sendMessage() {
 async function streamEvents(streamUrl) {
   state.streaming = true;
   state.abortCtrl = new AbortController();
-  const resp = await fetch(streamUrl, {
-    headers: { "X-App-Token": state.cfg.token },
-    signal: state.abortCtrl.signal,
-  });
+  const resp = await fetch(streamUrl, { signal: state.abortCtrl.signal });
   if (!resp.ok) throw new Error(`流式连接失败 (${resp.status})`);
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
@@ -257,9 +261,7 @@ function toggleComposer(busy) {
 $("composer").addEventListener("submit", (e) => { e.preventDefault(); sendMessage(); });
 $("stopBtn").addEventListener("click", async () => {
   if (state.sessionId) {
-    await fetch(`/api/sessions/${state.sessionId}/cancel`, {
-      method: "POST", headers: { "X-App-Token": state.cfg.token },
-    });
+    await fetch(`/api/sessions/${state.sessionId}/cancel`, { method: "POST" });
   }
   if (state.abortCtrl) state.abortCtrl.abort();
 });
@@ -270,16 +272,17 @@ $("clarifySendBtn").addEventListener("click", async () => {
   const ub = addBlock("user"); ub.textContent = text;
   await fetch(`/api/sessions/${state.sessionId}/answer`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-App-Token": state.cfg.token },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ call_id: state.pendingClarify.call_id, text }),
   });
   state.pendingClarify = null;
   $("clarifyBox").classList.add("hidden");
 });
-$("newChatBtn").addEventListener("click", () => {
+$("resetBtn").addEventListener("click", () => {
   state.sessionId = null;
   $("transcript").innerHTML = "";
   $("clarifyBox").classList.add("hidden");
+  initContextMeter();
 });
 
 // ---------- tiny utils ----------
@@ -288,7 +291,6 @@ function escapeHtml(s) {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 function cssEscape(s) { return (window.CSS && CSS.escape) ? CSS.escape(s) : s.replace(/"/g, '\\"'); }
-// very small markdown: code spans, bold, line breaks, leave citations as-is
 function markdownish(text) {
   return escapeHtml(text)
     .replace(/`([^`]+)`/g, "<code>$1</code>")
@@ -299,7 +301,5 @@ function markdownish(text) {
 // ---------- init ----------
 
 state.cfg = loadSettings();
-refreshRepoLine();
-if (!state.cfg || !state.cfg.token || !state.cfg.apikey || !state.cfg.repo) {
-  openSettings();
-}
+loadServerConfig();
+if (!state.cfg || !state.cfg.apikey) openSettings();

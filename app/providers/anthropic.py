@@ -122,7 +122,17 @@ class AnthropicProvider:
                 json=payload,
                 headers=headers,
             ) as resp:
-                resp.raise_for_status()
+                ctype = resp.headers.get("content-type", "")
+                if resp.status_code >= 400:
+                    body = (await resp.aread()).decode("utf-8", "replace").strip()
+                    raise RuntimeError(f"upstream HTTP {resp.status_code}: {body[:500]}")
+                if ctype and "event-stream" not in ctype:
+                    body = (await resp.aread()).decode("utf-8", "replace").strip()
+                    raise RuntimeError(
+                        f"upstream did not return an SSE stream "
+                        f"(content-type={ctype!r}, status={resp.status_code}): "
+                        f"{body[:300]}"
+                    )
                 async for ev in _parse_stream(resp):
                     yield ev
         finally:

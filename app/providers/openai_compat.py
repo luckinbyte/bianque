@@ -49,7 +49,23 @@ class OpenAICompatProvider:
                 json=payload,
                 headers=headers,
             ) as resp:
-                resp.raise_for_status()
+                ctype = resp.headers.get("content-type", "")
+                if resp.status_code >= 400:
+                    # Surface the upstream error body: new-api/one-api gateways
+                    # put the real reason (model not allowed, no quota, banned…)
+                    # in the JSON body, not the status line.
+                    body = (await resp.aread()).decode("utf-8", "replace").strip()
+                    raise RuntimeError(f"upstream HTTP {resp.status_code}: {body[:500]}")
+                if ctype and "event-stream" not in ctype:
+                    # Upstream returned a non-SSE body — often a JSON error
+                    # wrapped in HTTP 200 by a gateway (e.g. a wrong base_url).
+                    # Surface it instead of silently producing an empty answer.
+                    body = (await resp.aread()).decode("utf-8", "replace").strip()
+                    raise RuntimeError(
+                        f"upstream did not return an SSE stream "
+                        f"(content-type={ctype!r}, status={resp.status_code}): "
+                        f"{body[:300]}"
+                    )
                 async for ev in _parse_stream(resp):
                     yield ev
         finally:

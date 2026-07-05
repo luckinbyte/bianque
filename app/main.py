@@ -1,8 +1,10 @@
 """FastAPI application: HTTP/SSE routes for the source-analysis agent.
 
-Auth is a single shared ``APP_PASSWORD`` checked via the ``X-App-Token`` header
-on every endpoint. The browser uses fetch-based SSE streaming so it can send
-that header (EventSource cannot set headers). No secret ever appears in a URL.
+The deployment owns all shared config — analysis directory, provider, base_url,
+model, context window — and they are the same for every session. The only
+per-user value is an API key, sent in the request body. There is no access
+password: access control is expected to come from the LAN / reverse-proxy
+boundary. The browser uses fetch-based SSE so it can stream the agent turn.
 """
 from __future__ import annotations
 
@@ -11,7 +13,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Callable
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -19,7 +21,6 @@ from pydantic import BaseModel
 from app.agent.loop import run_turn
 from app.config import Settings, load_settings
 from app.providers import get_provider
-from app.security import PathEscapeError, resolve_allowed, verify_token
 from app.sessions import Session, SessionLimitError, SessionStore
 from app.sse import sse_event
 
@@ -30,11 +31,7 @@ TERMINAL_EVENTS = {"answer", "cancelled", "error"}
 # ---------- request bodies ----------
 
 class SessionCreate(BaseModel):
-    provider: str
-    base_url: str | None = None
     apikey: str
-    model: str
-    repo_path: str
 
 
 class MessageBody(BaseModel):
@@ -85,50 +82,51 @@ def create_app(
     app.state.store = store
     app.state.provider_factory = provider_factory
 
-    def require_token(
-        request: Request,
-        x_app_token: str | None = Header(default=None, alias="X-App-Token"),
-    ) -> None:
-        if not verify_token(x_app_token, request.app.state.settings.app_password):
-            raise HTTPException(status_code=401, detail="invalid or missing X-App-Token")
-
     def _session(request: Request, session_id: str) -> Session:
         s = request.app.state.store.get(session_id)
         if s is None:
             raise HTTPException(status_code=404, detail="session not found")
         return s
 
-    @app.post("/api/sessions", dependencies=[Depends(require_token)])
+    @app.get("/api/config")
+    async def config(request: Request):
+        cfg = request.app.state.settings
+        return {
+            "repo_root": str(cfg.repo_root),
+            "provider": cfg.provider,
+            "base_url": cfg.base_url,
+            "model": cfg.model,
+            "context_window": cfg.context_window,
+        }
+
+    @app.post("/api/sessions")
     async def create_session(request: Request, body: SessionCreate):
         cfg = request.app.state.settings
         try:
-            repo_root = resolve_allowed(body.repo_path, cfg.allowed_roots)
-        except PathEscapeError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        if not repo_root.exists() or not repo_root.is_dir():
-            raise HTTPException(status_code=400, detail=f"not a directory: {body.repo_path}")
-        try:
             session = await request.app.state.store.create(
-                provider=body.provider, base_url=body.base_url, apikey=body.apikey,
-                model=body.model, repo_root=repo_root, roots=cfg.allowed_roots,
+                provider=cfg.provider, base_url=cfg.base_url, apikey=body.apikey,
+                model=cfg.model, repo_root=cfg.repo_root, roots=[cfg.repo_root],
             )
         except SessionLimitError as e:
             raise HTTPException(status_code=503, detail=str(e))
         return {"session_id": session.id}
 
-    @app.post("/api/sessions/{session_id}/message", dependencies=[Depends(require_token)])
+    @app.post("/api/sessions/{session_id}/message")
     async def post_message(request: Request, session_id: str, body: MessageBody):
         session = _session(request, session_id)
         if session.task is not None and not session.task.done():
             raise HTTPException(status_code=409, detail="a turn is already running for this session")
+        cfg = request.app.state.settings
         factory = request.app.state.provider_factory or default_provider_factory
         provider = factory(session)
         session.queue = asyncio.Queue()
-        session.task = asyncio.create_task(_runner(session, provider, body.question))
+        session.task = asyncio.create_task(
+            _runner(session, provider, body.question, cfg.context_window)
+        )
         session.touch()
         return {"stream_url": f"/api/sessions/{session_id}/stream"}
 
-    @app.get("/api/sessions/{session_id}/stream", dependencies=[Depends(require_token)])
+    @app.get("/api/sessions/{session_id}/stream")
     async def stream(request: Request, session_id: str):
         session = _session(request, session_id)
         if session.queue is None:
@@ -148,7 +146,7 @@ def create_app(
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    @app.post("/api/sessions/{session_id}/answer", dependencies=[Depends(require_token)])
+    @app.post("/api/sessions/{session_id}/answer")
     async def post_answer(request: Request, session_id: str, body: AnswerBody):
         session = _session(request, session_id)
         fut = session.pending.get(body.call_id)
@@ -157,7 +155,7 @@ def create_app(
         fut.set_result(body.text)
         return {"ok": True}
 
-    @app.post("/api/sessions/{session_id}/cancel", dependencies=[Depends(require_token)])
+    @app.post("/api/sessions/{session_id}/cancel")
     async def cancel(request: Request, session_id: str):
         session = _session(request, session_id)
         if session.task is not None and not session.task.done():
@@ -177,7 +175,7 @@ def create_app(
     return app
 
 
-async def _runner(session: Session, provider: Any, question: str) -> None:
+async def _runner(session: Session, provider: Any, question: str, context_window: int) -> None:
     """Run one agent turn, pushing events into the session queue."""
     queue = session.queue
 
@@ -185,14 +183,14 @@ async def _runner(session: Session, provider: Any, question: str) -> None:
         await queue.put(ev)
 
     try:
-        await run_turn(session, provider, question, emit=emit)
+        await run_turn(session, provider, question, emit=emit, context_window=context_window)
     except asyncio.CancelledError:
         raise
     finally:
         session.task = None
 
 
-# Module-level `app` for `uvicorn app.main:app`. Requires APP_PASSWORD in env;
+# Module-level `app` for `uvicorn app.main:app`. Requires REPO_ROOT + MODEL in env;
 # if unset, `app` is None and uvicorn will refuse to start (by design).
 try:
     app = create_app(load_settings())

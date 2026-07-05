@@ -3,58 +3,42 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Bianque — 源码分析</title>
+  <title>扁鹊 — 源码分析</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
   <header>
-    <h1>🩺 Bianque</h1>
-    <div class="hdr-right">
+    <div class="hdr-left">
+      <h1>扁鹊 <svg viewBox="0 0 24 24" width="20" height="20" role="img" aria-label="葫芦" style="display:inline-block; vertical-align:middle; transform:rotate(20deg)"><rect x="11.3" y="1.6" width="1.4" height="2" rx="0.7" fill="currentColor"/><circle cx="12" cy="6.5" r="3.2" fill="currentColor"/><circle cx="12" cy="15" r="6" fill="currentColor"/></svg></h1>
       <span id="status" class="status idle">空闲</span>
+    </div>
+    <div class="hdr-right">
+      <div class="ctx-meter">
+        <span class="ctx-label">上下文</span>
+        <progress id="ctxProgress" class="ctx-progress" max="100" value="0"></progress>
+        <span id="ctxText" class="ctx-text">—</span>
+      </div>
       <button id="settingsBtn" type="button">⚙ 设置</button>
-      <button id="newChatBtn" type="button" class="ghost">＋ 新对话</button>
+      <button id="resetBtn" type="button" class="ghost">↻ 重置</button>
     </div>
   </header>
 
   <!-- 设置面板 -->
   <section id="settings" class="panel hidden">
-    <h2>设置(保存在浏览器 localStorage,不进 URL)</h2>
-    <p class="hint">访问密码由部署方提供。模型 apikey 是你自己的,仅随会话发到服务端、按会话存内存,不落盘。</p>
-    <label>访问密码 (APP_PASSWORD)
-      <input type="password" id="cfgToken" autocomplete="off" placeholder="服务端 APP_PASSWORD">
-    </label>
-    <fieldset>
-      <legend>模型</legend>
-      <label class="row">Provider
-        <select id="cfgProvider">
-          <option value="openai_compat">openai_compat (OpenAI/GLM/DeepSeek/Ollama…)</option>
-          <option value="anthropic">anthropic (Claude)</option>
-          <option value="local">local (Ollama 等)</option>
-        </select>
-      </label>
-      <label class="row">Base URL
-        <input type="text" id="cfgBase" placeholder="如 https://open.bigmodel.cn/api/paas/v4">
-      </label>
-      <label class="row">Model
-        <input type="text" id="cfgModel" placeholder="如 glm-4.5 / deepseek-chat / gpt-4o-mini">
-      </label>
-      <label class="row">API Key
-        <input type="password" id="cfgApikey" autocomplete="off" placeholder="sk-…">
-      </label>
-    </fieldset>
-    <label>分析目标(服务端本机的仓库路径,必须在 ALLOWED_ROOTS 内)
-      <input type="text" id="cfgRepo" placeholder="/home/code/myproject">
+    <h2>设置(仅保存在本浏览器)</h2>
+    <p class="hint">分析目录、模型等服务端已统一配置,所有人共用。这里只需填你自己的 API Key:仅随会话发到服务端、按会话存内存,不落盘、不进日志。</p>
+    <label>API Key
+      <input type="password" id="cfgApikey" autocomplete="off" placeholder="sk-…">
     </label>
     <div class="actions">
       <button id="saveSettingsBtn" type="button" class="primary">保存</button>
-      <button id="clearSettingsBtn" type="button" class="danger">清除 localStorage</button>
+      <button id="clearSettingsBtn" type="button" class="danger">清除</button>
       <button id="closeSettingsBtn" type="button" class="ghost">关闭</button>
     </div>
   </section>
 
   <!-- 主界面 -->
   <main id="main">
-    <div id="repoLine" class="repoline"></div>
     <div id="transcript"></div>
 
     <div id="clarifyBox" class="clarify hidden">
@@ -64,7 +48,7 @@
     </div>
 
     <form id="composer">
-      <textarea id="question" rows="2" placeholder="问点关于这个代码库的…(可随时追问)"></textarea>
+      <textarea id="question" rows="2" placeholder="问点关于这个代码库的…"></textarea>
       <button id="sendBtn" type="submit" class="primary">发送</button>
       <button id="stopBtn" type="button" class="danger hidden">停止</button>
     </form>

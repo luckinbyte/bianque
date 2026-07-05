@@ -29,6 +29,22 @@ def extract_evidence(text: str) -> list[dict[str, str]]:
     return [{"file": m.group(1), "line": m.group(2)} for m in _EVIDENCE_RE.finditer(text)]
 
 
+def estimate_tokens(messages: list[dict[str, Any]]) -> int:
+    """Rough token estimate for the progress bar (~chars/4).
+
+    Good enough to show context fill across providers without a tokenizer; not
+    used for billing or cutoff. Counts message text + assembled tool-call args.
+    """
+    n = 0
+    for m in messages:
+        content = m.get("content")
+        if isinstance(content, str):
+            n += len(content)
+        for tc in m.get("tool_calls") or []:
+            n += len((tc.get("function") or {}).get("arguments") or "")
+    return n // 4
+
+
 def _tools() -> list[dict[str, Any]]:
     """Full tool list shown to the model: read-only filesystem tools + ask_user."""
     return [*tool_schemas(), ASK_USER_SCHEMA]
@@ -42,6 +58,7 @@ async def run_turn(
     emit: Emit,
     max_steps: int = 20,
     system_prompt: str = DEFAULT_SYSTEM_PROMPT,
+    context_window: int = 200_000,
 ) -> None:
     """Run one user question to completion (answer / clarification / cancel).
 
@@ -52,6 +69,7 @@ async def run_turn(
         session.messages.append({"role": "system", "content": system_prompt})
     session.messages.append({"role": "user", "content": question})
     session.touch()
+    await emit({"type": "context", "used": estimate_tokens(session.messages), "window": context_window})
 
     try:
         for _ in range(max_steps):
@@ -72,6 +90,7 @@ async def run_turn(
             if not tool_calls:
                 # No tool calls => this turn is the final answer.
                 session.messages.append({"role": "assistant", "content": assistant_text})
+                await emit({"type": "context", "used": estimate_tokens(session.messages), "window": context_window})
                 await emit({
                     "type": "answer",
                     "text": assistant_text,
@@ -96,6 +115,7 @@ async def run_turn(
                 else:
                     await _handle_tool(session, tc, emit)
                 session.touch()
+            await emit({"type": "context", "used": estimate_tokens(session.messages), "window": context_window})
         else:
             await emit({"type": "error", "message": "max reasoning steps reached without an answer"})
 

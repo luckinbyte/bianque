@@ -50,7 +50,9 @@ async def _drive(session, provider, question, events):
 
 
 def _types(events):
-    return [e["type"] for e in events]
+    # context (progress-meter) events fire throughout the turn and are checked
+    # separately; exclude them so the business-event sequence stays stable.
+    return [e["type"] for e in events if e["type"] != "context"]
 
 
 # ---------- scenarios ----------
@@ -61,6 +63,7 @@ async def test_direct_answer():
     await _drive(_session(Path("/tmp"), []), provider, "what?", events)
     assert _types(events) == ["step", "answer"]
     assert events[-1] == {"type": "answer", "text": "The value is 42", "evidence": []}
+    assert any(e["type"] == "context" for e in events)
 
 
 async def test_tool_use_then_answer(tmp_path):
@@ -76,10 +79,13 @@ async def test_tool_use_then_answer(tmp_path):
 
     types = _types(events)
     assert types == ["tool_call", "tool_result", "step", "answer"]
-    assert events[0]["tool"] == "read_file"
-    assert events[1]["ok"] is True
-    assert "ANSWER=42" in events[1]["summary"]
+    tool_call = next(e for e in events if e["type"] == "tool_call")
+    tool_result = next(e for e in events if e["type"] == "tool_result")
+    assert tool_call["tool"] == "read_file"
+    assert tool_result["ok"] is True
+    assert "ANSWER=42" in tool_result["summary"]
     assert events[-1]["text"] == "It is 42."
+    assert any(e["type"] == "context" for e in events)
     # history recorded the assistant tool call + tool result
     roles = [m["role"] for m in session.messages]
     assert roles == ["system", "user", "assistant", "tool", "assistant"]
@@ -109,6 +115,7 @@ async def test_clarification_pauses_and_resumes(tmp_path):
     types = _types(events)
     assert types == ["tool_call", "clarification", "step", "answer"]
     assert events[-1]["text"] == "ok, based on your answer"
+    assert any(e["type"] == "context" for e in events)
 
 
 async def test_cancel_emits_cancelled(tmp_path):

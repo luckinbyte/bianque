@@ -4,14 +4,17 @@
 
 形态:**局域网网页 app**(FastAPI + SSE)。`/api/*` 本身也是外部 agent 可调用的 HTTP 接口,浏览器只是其首个客户端。
 
+部署方在服务端统一配置**分析目录 / 模型 provider / 上下文窗口**;团队成员打开网页**只需填自己的 API Key**,即可共用同一套配置分析同一份代码。
+
 ## 特性
 - 流式输出 agent 每一步(推理增量 / 工具调用 / 工具结果)。
+- 顶部**上下文进度条**:实时显示当前对话占用的上下文窗口用量。
 - 多轮澄清:agent 不清楚就停下问你,你回答后继续。
 - 实时中断:Stop 按钮取消进行中的 LLM 调用。
 - 强制证据:每条结论附 `文件:符号:Lxx-Lyy` + 片段。
-- 多 provider(默认 OpenAI 兼容,可切 Anthropic / 本地)。
-- 只读 + 路径沙箱:工具只能读 `ALLOWED_ROOTS` 内的文件,无 write/shell。
-- 多用户并发会话,共享同一组代码目录。
+- 服务端统一 provider(OpenAI 兼容 / Anthropic / 本地),前端只填 API Key。
+- 只读 + 路径沙箱:工具只能读 `REPO_ROOT` 内的文件,无 write/shell。
+- 多用户并发会话,共享同一份代码目录与模型配置。
 
 ## 快速开始
 ```bash
@@ -19,16 +22,16 @@ python3 -m venv .venv
 . .venv/bin/activate
 pip install -e .[dev]
 
-cp .env.example .env   # 至少改 APP_PASSWORD 和 ALLOWED_ROOTS
+cp .env.example .env   # 至少改 REPO_ROOT / PROVIDER / BASE_URL / MODEL
 set -a; . ./.env; set +a
 python -m uvicorn app.main:app --host "${HOST:-0.0.0.0}" --port "${PORT:-8000}"
 ```
-浏览器打开 `http://<本机IP>:8000/`,在"设置"里填 **APP_PASSWORD** 和你的 **模型 provider/apikey**(存浏览器 localStorage,不进 URL),即可使用。
+浏览器打开 `http://<本机IP>:8000/`,在「设置」里**只填你的 API Key**(其余由服务端 `.env` 统一提供),即可使用。
 
 ## 安全须知
-- **HTTPS**:局域网传明文有风险(apikey/密码过网)。生产请前置 caddy/nginx 做 TLS,或配置 `TLS_CERT`/`TLS_KEY`。
-- **APP_PASSWORD** 是唯一访问门槛,务必用强密码。
+- **本服务不内置访问密码**:apikey 由各用户自带(消耗各自 key 的额度,不存在"别人花你的钱");但 `REPO_ROOT` 内的源码对任何能访问端口的人可读,且并发会话可被恶意占满影响可用性。生产请用反向代理(caddy/nginx)做访问控制 + 自动 TLS,或配置 `TLS_CERT`/`TLS_KEY`。
+- **HTTPS**:局域网传明文有风险(apikey 过网)。生产务必前置 TLS。
 - **apikey** 仅在服务端内存按会话持有,绝不落盘/打日志;浏览器侧存 localStorage(可在设置里清除)。
-- 工具严格只读,路径强制限制在 `ALLOWED_ROOTS`。
+- 工具严格只读,路径强制限制在 `REPO_ROOT`。
 
 > 详见 `docs`/计划文件。本项目不依赖 MCP;若未来需要 MCP 接入,可在同一引擎上薄包一层。
