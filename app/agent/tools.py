@@ -302,3 +302,25 @@ ASK_USER_SCHEMA = {
         },
     },
 }
+
+
+EXPLORE_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "explore",
+        "description": (
+            "Delegate a broad, multi-file source exploration to an isolated "
+            "sub-agent that explores with read-only tools and returns a single "
+            "self-contained conclusion with `path:line` evidence. Use this for "
+            "wide-ranging questions to keep your own context lean; the sub-agent's "
+            "intermediate reads are NOT shown to you, only its final conclusion."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task": {"type": "string", "description": "What the sub-agent should find out — a focused question or goal."},
+            },
+            "required": ["task"],
+        },
+    },
+}

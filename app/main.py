@@ -18,6 +18,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from app.agent.a2ui import A2UIAdapter
 from app.agent.loop import run_turn
 from app.config import Settings, load_settings
 from app.providers import get_provider
@@ -107,8 +108,12 @@ def create_app(
                 provider=cfg.provider, base_url=cfg.base_url, apikey=body.apikey,
                 model=cfg.model, repo_root=cfg.repo_root, roots=[cfg.repo_root],
             )
-        except SessionLimitError as e:
-            raise HTTPException(status_code=503, detail=str(e))
+        except SessionLimitError:
+            # 结构化错误：前端凭 code 识别"医馆满员"并弹主题告示，而非通用错误条。
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "session_limit", "message": "现在医馆内人员过多，请稍后再来"},
+            )
         return {"session_id": session.id}
 
     @app.post("/api/sessions/{session_id}/message")
@@ -119,9 +124,10 @@ def create_app(
         cfg = request.app.state.settings
         factory = request.app.state.provider_factory or default_provider_factory
         provider = factory(session)
+        spawn_provider = lambda: factory(session)  # fresh provider per `explore` sub-agent
         session.queue = asyncio.Queue()
         session.task = asyncio.create_task(
-            _runner(session, provider, body.question, cfg.context_window)
+            _runner(session, provider, body.question, cfg.context_window, spawn_provider)
         )
         session.touch()
         return {"stream_url": f"/api/sessions/{session_id}/stream"}
@@ -175,15 +181,28 @@ def create_app(
     return app
 
 
-async def _runner(session: Session, provider: Any, question: str, context_window: int) -> None:
-    """Run one agent turn, pushing events into the session queue."""
+async def _runner(
+    session: Session, provider: Any, question: str, context_window: int,
+    spawn_provider: Callable[[], Any] | None = None,
+) -> None:
+    """Run one agent turn, pushing events into the session queue.
+
+    The agent loop emits its own event vocabulary; an :class:`A2UIAdapter`
+    wraps the queue emit and translates those events into an A2UI v0.9 envelope
+    stream (plus native passthroughs for the context meter / clarification /
+    terminal signals). run_turn itself is unaware of A2UI.
+    """
     queue = session.queue
 
     async def emit(ev: dict[str, Any]) -> None:
         await queue.put(ev)
 
+    adapter = A2UIAdapter(emit)
     try:
-        await run_turn(session, provider, question, emit=emit, context_window=context_window)
+        await run_turn(
+            session, provider, question, emit=adapter,
+            context_window=context_window, spawn_provider=spawn_provider,
+        )
     except asyncio.CancelledError:
         raise
     finally:

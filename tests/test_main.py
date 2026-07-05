@@ -66,6 +66,24 @@ def test_create_session_ok(tmp_path):
     assert "session_id" in r.json()
 
 
+def test_create_session_when_full_returns_structured_503(tmp_path):
+    from app.sessions import SessionStore
+
+    settings = load_settings({
+        "REPO_ROOT": str(tmp_path), "MODEL": "m", "BASE_URL": "http://x/v1",
+    })
+    store = SessionStore(max_sessions=1, idle_timeout=settings.session_idle_timeout)
+    c = TestClient(create_app(settings, store=store))
+
+    assert _create(c).status_code == 200           # 占用唯一的并发位
+    r = _create(c)                                  # 超出上限
+    assert r.status_code == 503
+    detail = r.json()["detail"]
+    assert isinstance(detail, dict)
+    assert detail["code"] == "session_limit"
+    assert "医馆" in detail["message"]
+
+
 # ---------- message + stream ----------
 
 def test_message_then_stream_simple_answer(tmp_path):
@@ -78,9 +96,11 @@ def test_message_then_stream_simple_answer(tmp_path):
 
     s = c.get(f"/api/sessions/{sid}/stream")
     assert s.status_code == 200
-    assert "step" in s.text
-    assert "answer" in s.text
-    assert "Hello " in s.text
+    # agent output now streams as A2UI envelopes; terminal signals still pass through
+    assert "createSurface" in s.text
+    assert "updateDataModel" in s.text
+    assert "Hello world." in s.text
+    assert '"type": "answer"' in s.text
 
 
 def test_stream_emits_context_event(tmp_path):
