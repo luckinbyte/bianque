@@ -5,21 +5,36 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>扁鹊 — 源码分析</title>
   <link rel="stylesheet" href="/static/style.css">
+  <script>
+    // 预载主题，避免刷新闪烁。默认夜诊暖暗。
+    try {
+      var t = localStorage.getItem("bianque.theme") || "night";
+      if (t !== "night" && t !== "paper") t = "night";
+      document.documentElement.className = "theme-" + t;
+    } catch (e) {
+      document.documentElement.className = "theme-night";
+    }
+  </script>
 </head>
 <body>
   <header>
     <div class="hdr-left">
-      <h1>扁鹊 <svg viewBox="0 0 24 24" width="20" height="20" role="img" aria-label="葫芦" style="display:inline-block; vertical-align:middle; transform:rotate(20deg)"><rect x="11.3" y="1.6" width="1.4" height="2" rx="0.7" fill="currentColor"/><circle cx="12" cy="6.5" r="3.2" fill="currentColor"/><circle cx="12" cy="15" r="6" fill="currentColor"/></svg></h1>
+      <div class="brand-seal" aria-hidden="true"><span>扁</span><span>鹊</span></div>
+      <div class="brand-text">
+        <h1>扁鹊</h1>
+        <div class="brand-tag">望 · 闻 · 问 · 切</div>
+      </div>
       <span id="status" class="status idle">空闲</span>
     </div>
     <div class="hdr-right">
-      <div class="ctx-meter">
-        <span class="ctx-label">上下文</span>
-        <progress id="ctxProgress" class="ctx-progress" max="100" value="0"></progress>
+      <div class="ctx-meter" id="ctxMeter" title="上下文窗口用量">
+        <span class="ctx-label">脉</span>
+        <span class="pulse-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
         <span id="ctxText" class="ctx-text">—</span>
       </div>
-      <button id="settingsBtn" type="button">⚙ 设置</button>
-      <button id="resetBtn" type="button" class="ghost">↻ 重置</button>
+      <button id="themeBtn" type="button" class="seal-btn" title="切换昼/夜主题">昼</button>
+      <button id="settingsBtn" type="button" class="seal-btn" title="设置">设</button>
+      <button id="resetBtn" type="button" class="seal-btn ghost" title="重置">↻</button>
     </div>
   </header>
 
@@ -39,7 +54,9 @@
 
   <!-- 主界面 -->
   <main id="main">
-    <div id="transcript"></div>
+    <div class="frame">
+      <div id="transcript"></div>
+    </div>
 
     <div id="clarifyBox" class="clarify hidden">
       <div class="clarify-q" id="clarifyQ"></div>
@@ -48,11 +65,27 @@
     </div>
 
     <form id="composer">
-      <textarea id="question" rows="2" placeholder="问点关于这个代码库的…"></textarea>
+      <span class="composer-seal" aria-hidden="true">问</span>
+      <textarea id="question" rows="2" placeholder="述其详…"></textarea>
       <button id="sendBtn" type="submit" class="primary">发送</button>
       <button id="stopBtn" type="button" class="danger hidden">停止</button>
     </form>
   </main>
+
+  <!-- 告示浮层(医馆满员等阻塞提示) -->
+  <div id="notice" class="notice hidden" role="alertdialog" aria-modal="true" aria-labelledby="noticeTitle">
+    <div class="notice-card">
+      <div class="notice-head">
+        <span class="notice-seal" aria-hidden="true">满</span>
+        <span class="notice-title" id="noticeTitle">告示</span>
+      </div>
+      <div class="notice-body" id="noticeBody">现在医馆内人员过多，请稍后再来。</div>
+      <div class="notice-actions">
+        <button id="noticeRetry" type="button" class="primary">再候片刻</button>
+        <button id="noticeClose" type="button" class="ghost">关闭</button>
+      </div>
+    </div>
+  </div>
 
   <script src="/static/app.js"></script>
 </body>
