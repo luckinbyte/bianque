@@ -7,9 +7,12 @@ no provider config or access password is entered client-side.
 """
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -25,6 +28,7 @@ class Settings:
     session_idle_timeout: int = 1800
     tls_cert: str | None = None
     tls_key: str | None = None
+    project_guide: str | None = None
 
     @property
     def tls_enabled(self) -> bool:
@@ -41,6 +45,26 @@ def _get_int(env: dict[str, str], key: str, default: int) -> int:
         return int(raw)
     except ValueError:
         return default
+
+
+def _load_project_guide(env: dict[str, str]) -> str | None:
+    """Read the optional admin-written project guide markdown.
+
+    ``PROJECT_GUIDE`` points at a markdown file the deployment author pre-wrote
+    with an intro / summary / navigation for the analyzed repo; its text is
+    injected into the agents' system prompts to help them scope user questions.
+    Optional: unset means no guide is injected. If set but the path is missing or
+    unreadable, we warn and skip (the server still starts) rather than fail hard.
+    """
+    raw = _get(env, "PROJECT_GUIDE")
+    if not raw:
+        return None
+    path = Path(raw).expanduser()
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as e:
+        log.warning("PROJECT_GUIDE %s could not be read (%s); skipping.", path, e)
+        return None
 
 
 def load_settings(env: dict[str, str] | None = None) -> Settings:
@@ -76,4 +100,5 @@ def load_settings(env: dict[str, str] | None = None) -> Settings:
         session_idle_timeout=_get_int(e, "SESSION_IDLE_TIMEOUT", 1800),
         tls_cert=_get(e, "TLS_CERT") or None,
         tls_key=_get(e, "TLS_KEY") or None,
+        project_guide=_load_project_guide(e),
     )

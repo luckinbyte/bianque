@@ -127,7 +127,10 @@ def create_app(
         spawn_provider = lambda: factory(session)  # fresh provider per `explore` sub-agent
         session.queue = asyncio.Queue()
         session.task = asyncio.create_task(
-            _runner(session, provider, body.question, cfg.context_window, spawn_provider)
+            _runner(
+                session, provider, body.question, cfg.context_window,
+                spawn_provider, cfg.project_guide,
+            )
         )
         session.touch()
         return {"stream_url": f"/api/sessions/{session_id}/stream"}
@@ -184,6 +187,7 @@ def create_app(
 async def _runner(
     session: Session, provider: Any, question: str, context_window: int,
     spawn_provider: Callable[[], Any] | None = None,
+    project_guide: str | None = None,
 ) -> None:
     """Run one agent turn, pushing events into the session queue.
 
@@ -202,6 +206,7 @@ async def _runner(
         await run_turn(
             session, provider, question, emit=adapter,
             context_window=context_window, spawn_provider=spawn_provider,
+            project_guide=project_guide,
         )
     except asyncio.CancelledError:
         raise

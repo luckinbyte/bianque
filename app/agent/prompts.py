@@ -52,3 +52,25 @@ rather than guessing.
 Be concise but complete: the parent will synthesize its own answer from what you \
 return, so surface only what bears on the task.
 """
+
+
+def with_project_guide(base_prompt: str, guide: str | None) -> str:
+    """Append the admin-provided project guide (markdown) to a system prompt.
+
+    Returns ``base_prompt`` unchanged when no guide is configured, so callers can
+    always pipe through this without branching. The guide is framed as
+    deployment-supplied navigation context the agent should use to interpret user
+    questions — reference material to scope where to look, not a citation source.
+    """
+    if not guide:
+        return base_prompt
+    return (
+        f"{base_prompt}\n\n"
+        "## Project guide (provided by the deployment admin)\n\n"
+        "The markdown below is a human-written intro / summary / navigation for "
+        "this repository. Use it as background to scope user questions and decide "
+        "where to start looking — but still verify with the read-only tools before "
+        "stating anything as fact. It is reference material, not a citation source: "
+        "do not treat lines from it as `path:line` evidence.\n\n"
+        f"{guide.strip()}\n"
+    )

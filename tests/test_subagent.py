@@ -47,6 +47,21 @@ class RecordingProvider(FakeProvider):
             yield ev
 
 
+class MessageCapturingProvider(FakeProvider):
+    """FakeProvider that captures the messages handed to its first stream() call,
+    so a test can assert what system prompt an agent actually ran with."""
+
+    def __init__(self, turns):
+        super().__init__(turns)
+        self.captured: list[dict] | None = None
+
+    async def stream(self, messages, tools, model):
+        if self.captured is None:
+            self.captured = messages
+        async for ev in super().stream(messages, tools, model):
+            yield ev
+
+
 class BlockingProvider:
     """Yields one delta, then blocks forever (to test cancellation)."""
     name = "fake"
@@ -63,10 +78,13 @@ def _session(repo_root: Path, roots: list[Path]) -> Session:
     )
 
 
-async def _drive(session, provider, question, events, *, spawn_provider=None):
+async def _drive(session, provider, question, events, *, spawn_provider=None, project_guide=None):
     async def emit(ev):
         events.append(ev)
-    await run_turn(session, provider, question, emit=emit, spawn_provider=spawn_provider)
+    await run_turn(
+        session, provider, question, emit=emit,
+        spawn_provider=spawn_provider, project_guide=project_guide,
+    )
 
 
 def _types(events):
@@ -218,3 +236,48 @@ async def test_subagent_cancellation_propagates(tmp_path):
     with pytest.raises(asyncio.CancelledError):
         await task
     assert any(e["type"] == "cancelled" for e in events)
+
+
+# ---------- project guide injection ----------
+
+async def test_project_guide_reaches_main_and_subagent(tmp_path):
+    """A configured PROJECT_GUIDE is appended to BOTH the main agent's system
+    message and the explore sub-agent's (local) system message."""
+    repo = tmp_path / "repo"; repo.mkdir()
+    (repo / "a.py").write_text("v=1\n", encoding="utf-8")
+    session = _session(repo, [tmp_path.resolve()])
+
+    guide = "MASTER-NAV-MARKER-XYZ"
+    main = FakeProvider([
+        [ToolCall(id="c1", name="explore", args={"task": "x"}), Finish("tool_calls")],
+        [ContentDelta("done at a.py:1"), Finish("stop")],
+    ])
+    sub = MessageCapturingProvider([
+        [ContentDelta("conclusion at a.py:1"), Finish("stop")],
+    ])
+    events: list = []
+    await _drive(
+        session, main, "q", events,
+        spawn_provider=lambda: sub, project_guide=guide,
+    )
+
+    # main agent: the system message (appended once at conversation start) carries it
+    assert session.messages[0]["role"] == "system"
+    assert guide in session.messages[0]["content"]
+    # sub-agent: its own (isolated) system message carries it too
+    assert sub.captured is not None
+    assert sub.captured[0]["role"] == "system"
+    assert guide in sub.captured[0]["content"]
+
+
+async def test_no_guide_leaves_system_prompt_unchanged(tmp_path):
+    """With no guide configured, the system prompt passes through untouched
+    (no empty 'Project guide' section, base prompt intact)."""
+    repo = tmp_path / "repo"; repo.mkdir()
+    session = _session(repo, [tmp_path.resolve()])
+    main = FakeProvider([[ContentDelta("ans"), Finish("stop")]])
+    events: list = []
+    await _drive(session, main, "q", events)
+
+    assert session.messages[0]["role"] == "system"
+    assert "Project guide" not in session.messages[0]["content"]

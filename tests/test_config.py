@@ -44,6 +44,7 @@ def test_defaults(tmp_path):
     assert s.session_idle_timeout == 1800
     assert s.tls_cert is None
     assert s.tls_key is None
+    assert s.project_guide is None
 
 
 def test_parses_env(tmp_path):
@@ -71,3 +72,28 @@ def test_parses_env(tmp_path):
     assert s.session_idle_timeout == 600
     assert s.tls_cert == "/c.pem"
     assert s.tls_key == "/k.pem"
+
+
+def test_project_guide_loaded(tmp_path):
+    guide = tmp_path / "guide.md"
+    guide.write_text("# 项目导航\n\n入口在 app/main.py\n", encoding="utf-8")
+    s = load_settings({
+        "REPO_ROOT": str(tmp_path),
+        "MODEL": "glm-4.5",
+        "BASE_URL": "http://x/v1",
+        "PROJECT_GUIDE": str(guide),
+    })
+    assert s.project_guide is not None
+    assert "入口在 app/main.py" in s.project_guide
+
+
+def test_project_guide_missing_file_warns_and_skips(tmp_path, caplog):
+    """A set-but-missing path must not crash startup: warn and degrade to None."""
+    s = load_settings({
+        "REPO_ROOT": str(tmp_path),
+        "MODEL": "glm-4.5",
+        "BASE_URL": "http://x/v1",
+        "PROJECT_GUIDE": str(tmp_path / "nope.md"),
+    })
+    assert s.project_guide is None
+    assert any("PROJECT_GUIDE" in r.getMessage() for r in caplog.records)

@@ -23,7 +23,11 @@ import re
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from app.agent.prompts import DEFAULT_SYSTEM_PROMPT, EXPLORER_SYSTEM_PROMPT
+from app.agent.prompts import (
+    DEFAULT_SYSTEM_PROMPT,
+    EXPLORER_SYSTEM_PROMPT,
+    with_project_guide,
+)
 from app.agent.tools import ASK_USER_SCHEMA, EXPLORE_SCHEMA, call_tool, tool_schemas
 from app.providers.base import ContentDelta, Finish, LLMEvent, ToolCall
 from app.sessions import Session
@@ -130,6 +134,7 @@ async def run_turn(
     system_prompt: str = DEFAULT_SYSTEM_PROMPT,
     context_window: int = 200_000,
     spawn_provider: Callable[[], Any] | None = None,
+    project_guide: str | None = None,
 ) -> None:
     """Run one user question to completion (answer / clarification / cancel).
 
@@ -142,7 +147,10 @@ async def run_turn(
     stateless). It exists so tests can inject a scripted provider per agent.
     """
     if not session.messages:
-        session.messages.append({"role": "system", "content": system_prompt})
+        session.messages.append({
+            "role": "system",
+            "content": with_project_guide(system_prompt, project_guide),
+        })
     session.messages.append({"role": "user", "content": question})
     session.touch()
     await emit({"type": "context", "used": estimate_tokens(session.messages), "window": context_window})
@@ -180,7 +188,8 @@ async def run_turn(
                     await _handle_ask_user(session, tc, emit)
                 elif tc.name == "explore":
                     await _handle_explore(
-                        session, provider, tc, emit, spawn_provider=spawn_provider
+                        session, provider, tc, emit,
+                        spawn_provider=spawn_provider, project_guide=project_guide,
                     )
                 else:
                     await _handle_tool(session, tc, emit)
@@ -237,6 +246,7 @@ async def _handle_explore(
     emit: Emit,
     *,
     spawn_provider: Callable[[], Any] | None,
+    project_guide: str | None = None,
 ) -> None:
     """Delegate a broad exploration to an isolated sub-agent.
 
@@ -258,6 +268,7 @@ async def _handle_explore(
             repo_root=session.repo_root,
             roots=session.roots,
             emit=sub_emit,
+            project_guide=project_guide,
         )
     except asyncio.CancelledError:
         raise  # Stop must kill the whole tree
@@ -285,6 +296,7 @@ async def run_subagent(
     roots: list[Path],
     emit: Emit,
     max_steps: int = 15,
+    project_guide: str | None = None,
 ) -> str:
     """Run an isolated exploration sub-agent to a single conclusion.
 
@@ -298,7 +310,7 @@ async def run_subagent(
     can feed the conclusion back as a tool result. ``CancelledError`` propagates.
     """
     messages: list[dict[str, Any]] = [
-        {"role": "system", "content": EXPLORER_SYSTEM_PROMPT},
+        {"role": "system", "content": with_project_guide(EXPLORER_SYSTEM_PROMPT, project_guide)},
         {"role": "user", "content": task},
     ]
     tools = tool_schemas()  # read-only FS only — no ask_user, no explore
